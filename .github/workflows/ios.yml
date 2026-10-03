@@ -15,20 +15,106 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Diagnose platform detection
-        run: |
-          echo "=== dependencies.txt ==="
-          cat dependencies/ios/dependencies.txt
-          echo "=== RetroEngine.hpp 40-110 ==="
-          sed -n 40,110p RSDKv4/RetroEngine.hpp
-          echo "=== BASE_PATH definitions ==="
-          grep -rn "BASE_PATH" RSDKv4/*.hpp RSDKv4/*.cpp | head -20
-          echo "=== project build settings ==="
-          sed -n 425,450p "RSDKv4 ios.xcodeproj/project.pbxproj"
-          sed -n 510,560p "RSDKv4 ios.xcodeproj/project.pbxproj"
-
       - name: Remove Data.rsdk from bundle resources
         run: sed -i '' '/Data.rsdk in Resources/d' "RSDKv4 ios.xcodeproj/project.pbxproj"
+
+      - name: Patch platform detection and SDL for iOS
+        run: |
+          python3 - <<'EOF'
+          import re
+          p = "RSDKv4/RetroEngine.hpp"
+          raw = open(p, newline="").read()
+          nl = "\r\n" if "\r\n" in raw else "\n"
+          s = raw.replace("\r\n", "\n")
+
+          old = "#elif defined __APPLE__\n#if __IPHONEOS__"
+          new = "#elif defined __APPLE__\n#include <TargetConditionals.h>\n#if TARGET_OS_IPHONE"
+          assert old in s, "platform detection pattern not found"
+          s = s.replace(old, new, 1)
+
+          s, n = re.subn(
+              r"(\|\| RETRO_PLATFORM == RETRO_ANDROID)(\s*\n#ifdef RETRO_USE_SDL2)",
+              r"\1 || RETRO_PLATFORM == RETRO_iOS\2", s, count=1)
+          assert n == 1, "SDL2 platform list pattern not found"
+
+          open(p, "w", newline="").write(s.replace("\n", nl))
+          EOF
+
+      - name: Build SDL2 for iOS
+        run: |
+          curl -L -o sdl.tar.gz https://github.com/libsdl-org/SDL/archive/refs/tags/release-2.32.10.tar.gz
+          tar xzf sdl.tar.gz
+          SDLDIR=$(ls -d SDL-release-2.32.10)
+          xcodebuild -list -project "$SDLDIR/Xcode/SDL/SDL.xcodeproj" || true
+          xcodebuild \
+            -project "$SDLDIR/Xcode/SDL/SDL.xcodeproj" \
+            -target Framework-iOS \
+            -configuration Release \
+            -sdk iphoneos \
+            SYMROOT="$PWD/sdl-build" \
+            IPHONEOS_DEPLOYMENT_TARGET=13.0 \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+          find sdl-build -maxdepth 3 -name "*.framework"
+          cp -R "$(find sdl-build -maxdepth 3 -name SDL2.framework | head -1)" dependencies/ios/
+          cp -R "$(find sdl-build -maxdepth 3 -name hidapi.framework | head -1)" dependencies/ios/ || true
+
+          # libSDLMain.a (provides the iOS entry point)
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          xcrun --sdk iphoneos clang -arch arm64 -miphoneos-version-min=13.0 \
+            -isysroot "$SDK" -I"$SDLDIR/include" \
+            -c "$SDLDIR/src/main/uikit/SDL_uikit_main.c" -o sdlmain.o
+          ar rcs dependencies/ios/libSDLMain.a sdlmain.o
+          ls -la dependencies/ios
+
+      - name: Generate Info.plist
+        run: |
+          cat > dependencies/ios/Info.plist <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleDevelopmentRegion</key><string>en</string>
+            <key>CFBundleExecutable</key><string>$(EXECUTABLE_NAME)</string>
+            <key>CFBundleIdentifier</key><string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+            <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+            <key>CFBundleName</key><string>$(PRODUCT_NAME)</string>
+            <key>CFBundleDisplayName</key><string>RSDKv4</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>CFBundleShortVersionString</key><string>$(MARKETING_VERSION)</string>
+            <key>CFBundleVersion</key><string>1</string>
+            <key>LSRequiresIPhoneOS</key><true/>
+            <key>UIFileSharingEnabled</key><true/>
+            <key>LSSupportsOpeningDocumentsInPlace</key><true/>
+            <key>UIRequiresFullScreen</key><true/>
+            <key>UIStatusBarHidden</key><true/>
+            <key>UIRequiredDeviceCapabilities</key><array><string>arm64</string></array>
+            <key>UISupportedInterfaceOrientations</key>
+            <array>
+              <string>UIInterfaceOrientationLandscapeLeft</string>
+              <string>UIInterfaceOrientationLandscapeRight</string>
+            </array>
+          </dict>
+          </plist>
+          EOF
+          if [ -f dependencies/ios/Base.lproj/LaunchScreen.storyboard ]; then
+            plutil -insert UILaunchStoryboardName -string LaunchScreen dependencies/ios/Info.plist
+          fi
+          plutil -lint dependencies/ios/Info.plist
+
+      - name: Diagnose audio deps and entry point
+        run: |
+          echo "=== dependencies/ios/Base.lproj ==="
+          ls -la dependencies/ios/Base.lproj
+          echo "=== RetroEngine.hpp 280-340 ==="
+          sed -n 280,340p RSDKv4/RetroEngine.hpp
+          echo "=== vorbis/ogg/theora usage ==="
+          grep -rn -E "vorbis|ogg|theora" RSDKv4/*.hpp RSDKv4/*.cpp | head -30
+          echo "=== main.cpp ==="
+          grep -n -B3 -A12 "int main" RSDKv4/main.cpp
+          echo "=== __IPHONEOS__ / RETRO_OSX usage ==="
+          grep -rn "__IPHONEOS__" RSDKv4 | head
+          grep -rn -c "RETRO_OSX" RSDKv4/*.cpp RSDKv4/*.hpp | grep -v ":0"
 
       - name: Build (unsigned)
         run: |
@@ -38,23 +124,21 @@ jobs:
             -configuration Release \
             -sdk iphoneos \
             -derivedDataPath build \
+            GCC_PREPROCESSOR_DEFINITIONS='$(inherited) RETRO_USING_OPENGL=0' \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             build
 
-      - name: Enable file sharing in Info.plist
-        run: |
-          PLIST=$(ls -d build/Build/Products/Release-iphoneos/*.app)/Info.plist
-          /usr/libexec/PlistBuddy -c "Add :UIFileSharingEnabled bool true" "$PLIST" || \
-            /usr/libexec/PlistBuddy -c "Set :UIFileSharingEnabled true" "$PLIST"
-          /usr/libexec/PlistBuddy -c "Add :LSSupportsOpeningDocumentsInPlace bool true" "$PLIST" || \
-            /usr/libexec/PlistBuddy -c "Set :LSSupportsOpeningDocumentsInPlace true" "$PLIST"
-
       - name: Package IPA
         run: |
+          APP=$(ls -d build/Build/Products/Release-iphoneos/*.app)
+          mkdir -p "$APP/Frameworks"
+          if [ -d dependencies/ios/hidapi.framework ] && [ ! -d "$APP/Frameworks/hidapi.framework" ]; then
+            cp -R dependencies/ios/hidapi.framework "$APP/Frameworks/"
+          fi
           mkdir -p Payload
-          cp -R build/Build/Products/Release-iphoneos/*.app Payload/
+          cp -R "$APP" Payload/
           zip -r RSDKv4-unsigned.ipa Payload
 
       - name: Upload IPA
