@@ -15,35 +15,17 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Make app icon set iOS-compatible
-        run: |
-          ICONSET="dependencies/mac/Assets.xcassets/AppIcon.appiconset"
-          cat > "$ICONSET/Contents.json" <<'EOF'
-          {
-            "images" : [
-              {
-                "filename" : "RSDKv4 Decomp Icon-1024.png",
-                "idiom" : "universal",
-                "platform" : "ios",
-                "size" : "1024x1024"
-              }
-            ],
-            "info" : {
-              "author" : "xcode",
-              "version" : 1
-            }
-          }
-          EOF
+      - name: List schemes
+        run: xcodebuild -list -project "RSDKv4 ios.xcodeproj" || true
 
       - name: Build (unsigned)
         run: |
           xcodebuild \
-            -project RSDKv4.xcodeproj \
+            -project "RSDKv4 ios.xcodeproj" \
             -scheme "RSDKv4" \
             -configuration Release \
             -sdk iphoneos \
             -derivedDataPath build \
-            IPHONEOS_DEPLOYMENT_TARGET=13.0 \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
