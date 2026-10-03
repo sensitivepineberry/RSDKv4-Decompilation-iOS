@@ -15,10 +15,25 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Inspect app icon set
+      - name: Make app icon set iOS-compatible
         run: |
-          ls -la dependencies/mac/Assets.xcassets/AppIcon.appiconset || true
-          cat dependencies/mac/Assets.xcassets/AppIcon.appiconset/Contents.json || true
+          ICONSET="dependencies/mac/Assets.xcassets/AppIcon.appiconset"
+          cat > "$ICONSET/Contents.json" <<'EOF'
+          {
+            "images" : [
+              {
+                "filename" : "RSDKv4 Decomp Icon-1024.png",
+                "idiom" : "universal",
+                "platform" : "ios",
+                "size" : "1024x1024"
+              }
+            ],
+            "info" : {
+              "author" : "xcode",
+              "version" : 1
+            }
+          }
+          EOF
 
       - name: Build (unsigned)
         run: |
