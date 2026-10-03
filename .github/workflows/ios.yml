@@ -42,6 +42,14 @@ jobs:
               r"\1 || RETRO_PLATFORM == RETRO_iOS\2", s, count=1)
           assert n == 1, "SDL2 platform list pattern not found"
           save(p, s, nl)
+                    # 1b. cocoaHelpers (getDocumentsPath) for iOS
+          raw, nl, s = load("RSDKv4/RetroEngine.hpp")
+          old = "#elif RETRO_USING_SDL2\n#include <SDL2/SDL.h>\n#include <vorbis/vorbisfile.h>\n#else"
+          new = ("#elif RETRO_USING_SDL2\n#include <SDL2/SDL.h>\n#include <vorbis/vorbisfile.h>\n"
+                 "#if RETRO_PLATFORM == RETRO_iOS\n#include \"cocoaHelpers.hpp\"\n#endif\n#else")
+          assert old in s, "SDL2 include branch not found"
+          save("RSDKv4/RetroEngine.hpp", s.replace(old, new, 1), nl)
+
 
           # 2. Run from the app's Documents folder
           p = "RSDKv4/main.cpp"
@@ -150,7 +158,7 @@ jobs:
             -sdk iphoneos \
             -derivedDataPath build \
             GCC_PREPROCESSOR_DEFINITIONS='$(inherited) RETRO_USING_OPENGL=0' \
-            HEADER_SEARCH_PATHS='$(inherited) $(PROJECT_DIR)/RSDKv4 $(PROJECT_DIR)/RSDKv4/NativeObjects $(PROJECT_DIR)/deps-ios/include $(PROJECT_DIR)/dependencies/all/asio/asio/include $(PROJECT_DIR)/dependencies/all/tinyxml2 $(PROJECT_DIR)/dependencies/all/stb-image' \
+            HEADER_SEARCH_PATHS='$(inherited) $(PROJECT_DIR)/RSDKv4 $(PROJECT_DIR)/RSDKv4/NativeObjects $(PROJECT_DIR)/dependencies/mac $(PROJECT_DIR)/deps-ios/include $(PROJECT_DIR)/dependencies/all/asio/asio/include $(PROJECT_DIR)/dependencies/all/tinyxml2 $(PROJECT_DIR)/dependencies/all/stb-image' \
             LIBRARY_SEARCH_PATHS='$(inherited) $(PROJECT_DIR)/deps-ios/lib' \
             OTHER_LDFLAGS='$(inherited) -lvorbisfile -lvorbis -logg' \
             CODE_SIGNING_ALLOWED=NO \
