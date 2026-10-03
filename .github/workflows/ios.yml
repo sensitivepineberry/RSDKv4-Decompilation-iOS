@@ -15,8 +15,14 @@ jobs:
         with:
           submodules: recursive
 
-      - name: List schemes
-        run: xcodebuild -list -project "RSDKv4 ios.xcodeproj" || true
+      - name: Check where the engine looks for Data.rsdk
+        run: |
+          grep -rn -E "Data\.rsdk|Documents|NSDocumentDirectory|getResourcePath|resourcePath" \
+            --include=*.cpp --include=*.hpp --include=*.mm --include=*.m --include=*.h \
+            RSDKv4 dependencies/ios 2>/dev/null | head -50
+
+      - name: Remove Data.rsdk from bundle resources
+        run: sed -i '' '/Data.rsdk in Resources/d' "RSDKv4 ios.xcodeproj/project.pbxproj"
 
       - name: Build (unsigned)
         run: |
@@ -30,6 +36,14 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             build
+
+      - name: Enable file sharing in Info.plist
+        run: |
+          PLIST=$(ls -d build/Build/Products/Release-iphoneos/*.app)/Info.plist
+          /usr/libexec/PlistBuddy -c "Add :UIFileSharingEnabled bool true" "$PLIST" || \
+            /usr/libexec/PlistBuddy -c "Set :UIFileSharingEnabled true" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :LSSupportsOpeningDocumentsInPlace bool true" "$PLIST" || \
+            /usr/libexec/PlistBuddy -c "Set :LSSupportsOpeningDocumentsInPlace true" "$PLIST"
 
       - name: Package IPA
         run: |
