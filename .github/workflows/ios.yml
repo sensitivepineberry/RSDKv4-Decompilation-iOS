@@ -42,11 +42,27 @@ jobs:
               r"\1 || RETRO_PLATFORM == RETRO_iOS\2", s, count=1)
           assert n == 1, "SDL2 platform list pattern not found"
           save(p, s, nl)
-                    # 1b. cocoaHelpers (getDocumentsPath) for iOS
+          # 1b. getDocumentsPath for iOS
           raw, nl, s = load("RSDKv4/RetroEngine.hpp")
           old = "#elif RETRO_USING_SDL2\n#include <SDL2/SDL.h>\n#include <vorbis/vorbisfile.h>\n#else"
-          new = ("#elif RETRO_USING_SDL2\n#include <SDL2/SDL.h>\n#include <vorbis/vorbisfile.h>\n"
-                 "#if RETRO_PLATFORM == RETRO_iOS\n#include \"cocoaHelpers.hpp\"\n#endif\n#else")
+          new = '''#elif RETRO_USING_SDL2
+          #include <SDL2/SDL.h>
+          #include <vorbis/vorbisfile.h>
+          #if RETRO_PLATFORM == RETRO_iOS
+          #include <stdlib.h>
+          #include <stdio.h>
+          static inline const char *RSDK_GetDocumentsPath()
+          {
+              static char p[1024];
+              if (!p[0]) {
+                  const char *h = getenv("HOME");
+                  snprintf(p, sizeof(p), "%s/Documents", h ? h : ".");
+              }
+              return p;
+          }
+          #define getDocumentsPath() RSDK_GetDocumentsPath()
+          #endif
+          #else'''.replace("\n          ", "\n")
           assert old in s, "SDL2 include branch not found"
           save("RSDKv4/RetroEngine.hpp", s.replace(old, new, 1), nl)
 
@@ -148,6 +164,23 @@ jobs:
           EOF
           plutil -insert UILaunchStoryboardName -string LaunchScreen dependencies/ios/Info.plist
           plutil -lint dependencies/ios/Info.plist
+
+      - name: Diagnose platform and cocoaHelpers
+        run: |
+          echo "=== getDocumentsPath / resource path usage ==="
+          grep -rn -E "getDocumentsPath|getResourcesPath|getResourcePath" RSDKv4 dependencies/mac --include=*.hpp --include=*.cpp --include=*.mm --include=*.h | head -40
+          echo "=== cocoaHelpers.hpp ==="
+          cat dependencies/mac/cocoaHelpers.hpp
+          echo "=== Userdata.cpp 1-60 ==="
+          sed -n 1,60p RSDKv4/Userdata.cpp
+          echo "=== effective platform macros ==="
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          xcrun --sdk iphoneos clang++ -arch arm64 -isysroot "$SDK" -std=gnu++17 -x c++ -E -dM \
+            -F dependencies/ios -I RSDKv4 -I RSDKv4/NativeObjects -I deps-ios/include \
+            -I dependencies/all/asio/asio/include -I dependencies/all/tinyxml2 -I dependencies/all/stb-image \
+            -DRETRO_USING_OPENGL=0 RSDKv4/RetroEngine.hpp 2>&1 \
+            | grep -E "define RETRO_PLATFORM |define RETRO_USING_SDL2|define RETRO_iOS |define RETRO_OSX |error" || true
+
 
       - name: Build (unsigned)
         run: |
