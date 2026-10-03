@@ -16,12 +16,12 @@ jobs:
           submodules: recursive
 
       - name: List schemes
-        run: xcodebuild -list -project RSDKv4 ios.xcodeproj || true
+        run: xcodebuild -list -project RSDKv4.xcodeproj || true
 
       - name: Build (unsigned)
         run: |
           xcodebuild \
-            -project RSDKv4 ios.xcodeproj \
+            -project RSDKv4.xcodeproj \
             -scheme "RSDKv4" \
             -configuration Release \
             -sdk iphoneos \
