@@ -1,0 +1,44 @@
+name: Build iOS
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: List schemes
+        run: xcodebuild -list -project RSDKv4 ios.xcodeproj || true
+
+      - name: Build (unsigned)
+        run: |
+          xcodebuild \
+            -project RSDKv4 ios.xcodeproj \
+            -scheme "RSDKv4" \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Package IPA
+        run: |
+          mkdir -p Payload
+          cp -R build/Build/Products/Release-iphoneos/*.app Payload/
+          zip -r RSDKv4-unsigned.ipa Payload
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: RSDKv4-ios-unsigned
+          path: RSDKv4-unsigned.ipa
