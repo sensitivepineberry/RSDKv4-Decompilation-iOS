@@ -18,6 +18,13 @@ jobs:
       - name: Remove Data.rsdk from bundle resources
         run: sed -i '' '/Data.rsdk in Resources/d' "RSDKv4 ios.xcodeproj/project.pbxproj"
 
+      - name: Drop Ogg/Vorbis framework links (we link static libs instead)
+        run: |
+          sed -i '' -e '/Ogg\.framework in /d' -e '/Vorbis\.framework in /d' -e '/vorbis\.framework in /d' \
+            "RSDKv4 ios.xcodeproj/project.pbxproj"
+          grep -n -i -E "ogg|vorbis" "RSDKv4 ios.xcodeproj/project.pbxproj" | head
+
+
       - name: Patch engine for iOS
         run: |
           python3 - <<'EOF'
