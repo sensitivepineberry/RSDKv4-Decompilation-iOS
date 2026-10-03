@@ -15,11 +15,19 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Check where the engine looks for Data.rsdk
+      - name: Diagnose iOS build setup
         run: |
-          grep -rn -E "Data\.rsdk|Documents|NSDocumentDirectory|getResourcePath|resourcePath" \
-            --include=*.cpp --include=*.hpp --include=*.mm --include=*.m --include=*.h \
-            RSDKv4 dependencies/ios 2>/dev/null | head -50
+          echo "=== dependencies/ios contents ==="
+          ls -la dependencies/ios
+          echo "=== RetroEngine.hpp 110-230 ==="
+          sed -n 110,230p RSDKv4/RetroEngine.hpp
+          echo "=== RetroEngine.cpp 285-335 ==="
+          sed -n 285,335p RSDKv4/RetroEngine.cpp
+          echo "=== project defines and search paths ==="
+          grep -n -E "GCC_PREPROCESSOR_DEFINITIONS|RETRO_|HEADER_SEARCH_PATHS|FRAMEWORK_SEARCH_PATHS|SDL|OpenGL" \
+            "RSDKv4 ios.xcodeproj/project.pbxproj" | head -60
+          echo "=== other platform defines ==="
+          grep -rn -E "RETRO_iOS|RETRO_PLATFORM *==|define RETRO_PLATFORM" RSDKv4/*.hpp | head -40
 
       - name: Remove Data.rsdk from bundle resources
         run: sed -i '' '/Data.rsdk in Resources/d' "RSDKv4 ios.xcodeproj/project.pbxproj"
