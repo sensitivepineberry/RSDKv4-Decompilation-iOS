@@ -89,6 +89,48 @@ jobs:
           save(p, s, nl)
           EOF
 
+      - name: Repair stale source references
+        run: |
+          python3 - <<'EOF'
+          import os, re
+
+          p = "RSDKv4 ios.xcodeproj/project.pbxproj"
+          text = open(p, encoding="utf-8").read()
+
+          refs = {}
+          for m in re.finditer(
+              r'(\w{24}) /\* (.+?) \*/ = \{isa = PBXFileReference;[^\n]*?path = (?:"([^"]+)"|([^;]+));[^\n]*?sourceTree = ("[^"]*"|\w+);',
+              text):
+              refs[m.group(1)] = ((m.group(3) or m.group(4)).strip(), m.group(5))
+
+          builds = {}
+          for m in re.finditer(
+              r'(\w{24}) /\* (.+?) in Sources \*/ = \{isa = PBXBuildFile; fileRef = (\w{24})', text):
+              builds[m.group(1)] = m.group(3)
+
+          remove, kept = set(), []
+          for bid, rid in builds.items():
+              path, tree = refs.get(rid, (None, None))
+              if path and tree == "SOURCE_ROOT" and not os.path.exists(path):
+                  print("removing stale source:", path)
+                  remove.add(bid)
+              elif path:
+                  kept.append(path)
+
+          lines = [l for l in text.split("\n") if not any(b in l for b in remove)]
+          open(p, "w", encoding="utf-8").write("\n".join(lines))
+
+          native_in_project = any("NativeObjects/" in k for k in kept)
+          all_cpp = "RSDKv4/NativeObjects/All.cpp"
+          print("NativeObjects already compiled by project:", native_in_project)
+          if remove and os.path.exists(all_cpp) and not native_in_project:
+              with open("RSDKv4/Text.cpp", "a") as f:
+                  f.write('\n#include "NativeObjects/All.cpp"\n')
+              print("appended NativeObjects/All.cpp include to Text.cpp")
+          print("sources kept:", len(kept), "removed:", len(remove))
+          EOF
+
+
       - name: Build SDL2 for iOS
         run: |
           curl -fL -o sdl.tar.gz https://github.com/libsdl-org/SDL/archive/refs/tags/release-2.32.10.tar.gz
@@ -164,22 +206,6 @@ jobs:
           EOF
           plutil -insert UILaunchStoryboardName -string LaunchScreen dependencies/ios/Info.plist
           plutil -lint dependencies/ios/Info.plist
-
-      - name: Diagnose platform and cocoaHelpers
-        run: |
-          echo "=== getDocumentsPath / resource path usage ==="
-          grep -rn -E "getDocumentsPath|getResourcesPath|getResourcePath" RSDKv4 dependencies/mac --include=*.hpp --include=*.cpp --include=*.mm --include=*.h | head -40
-          echo "=== cocoaHelpers.hpp ==="
-          cat dependencies/mac/cocoaHelpers.hpp
-          echo "=== Userdata.cpp 1-60 ==="
-          sed -n 1,60p RSDKv4/Userdata.cpp
-          echo "=== effective platform macros ==="
-          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
-          xcrun --sdk iphoneos clang++ -arch arm64 -isysroot "$SDK" -std=gnu++17 -x c++ -E -dM \
-            -F dependencies/ios -I RSDKv4 -I RSDKv4/NativeObjects -I deps-ios/include \
-            -I dependencies/all/asio/asio/include -I dependencies/all/tinyxml2 -I dependencies/all/stb-image \
-            -DRETRO_USING_OPENGL=0 RSDKv4/RetroEngine.hpp 2>&1 \
-            | grep -E "define RETRO_PLATFORM |define RETRO_USING_SDL2|define RETRO_iOS |define RETRO_OSX |error" || true
 
 
       - name: Build (unsigned)
