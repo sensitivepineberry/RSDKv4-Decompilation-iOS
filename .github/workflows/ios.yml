@@ -150,7 +150,7 @@ jobs:
             -sdk iphoneos \
             -derivedDataPath build \
             GCC_PREPROCESSOR_DEFINITIONS='$(inherited) RETRO_USING_OPENGL=0' \
-            HEADER_SEARCH_PATHS='$(inherited) $(PROJECT_DIR)/deps-ios/include $(PROJECT_DIR)/dependencies/all/asio/asio/include $(PROJECT_DIR)/dependencies/all/tinyxml2 $(PROJECT_DIR)/dependencies/all/stb-image' \
+            HEADER_SEARCH_PATHS='$(inherited) $(PROJECT_DIR)/RSDKv4 $(PROJECT_DIR)/RSDKv4/NativeObjects $(PROJECT_DIR)/deps-ios/include $(PROJECT_DIR)/dependencies/all/asio/asio/include $(PROJECT_DIR)/dependencies/all/tinyxml2 $(PROJECT_DIR)/dependencies/all/stb-image' \
             LIBRARY_SEARCH_PATHS='$(inherited) $(PROJECT_DIR)/deps-ios/lib' \
             OTHER_LDFLAGS='$(inherited) -lvorbisfile -lvorbis -logg' \
             CODE_SIGNING_ALLOWED=NO \
