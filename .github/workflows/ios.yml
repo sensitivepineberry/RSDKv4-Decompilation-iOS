@@ -24,7 +24,6 @@ jobs:
             "RSDKv4 ios.xcodeproj/project.pbxproj"
           grep -n -i -E "ogg|vorbis" "RSDKv4 ios.xcodeproj/project.pbxproj" | head
 
-
       - name: Patch engine for iOS
         run: |
           python3 - <<'EOF'
@@ -49,6 +48,7 @@ jobs:
               r"\1 || RETRO_PLATFORM == RETRO_iOS\2", s, count=1)
           assert n == 1, "SDL2 platform list pattern not found"
           save(p, s, nl)
+
           # 1b. getDocumentsPath for iOS
           raw, nl, s = load("RSDKv4/RetroEngine.hpp")
           old = "#elif RETRO_USING_SDL2\n#include <SDL2/SDL.h>\n#include <vorbis/vorbisfile.h>\n#else"
@@ -73,6 +73,14 @@ jobs:
           assert old in s, "SDL2 include branch not found"
           save("RSDKv4/RetroEngine.hpp", s.replace(old, new, 1), nl)
 
+          # 1c. Use the OpenGL ES profile on iOS
+          p = "RSDKv4/Drawing.cpp"
+          raw, nl, s = load(p)
+          s, n = re.subn(
+              r"#if RETRO_PLATFORM != RETRO_ANDROID(\s*\n\s*SDL_GL_SetAttribute\(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE\);)",
+              r"#if RETRO_PLATFORM != RETRO_ANDROID && RETRO_PLATFORM != RETRO_iOS\1", s, count=1)
+          assert n == 1, "GL profile pattern not found"
+          save(p, s, nl)
 
           # 2. Run from the app's Documents folder
           p = "RSDKv4/main.cpp"
@@ -178,7 +186,6 @@ jobs:
           print("appended:", extra)
           EOF
 
-
       - name: Build SDL2 for iOS
         run: |
           curl -fL -o sdl.tar.gz https://github.com/libsdl-org/SDL/archive/refs/tags/release-2.32.10.tar.gz
@@ -255,19 +262,45 @@ jobs:
           plutil -insert UILaunchStoryboardName -string LaunchScreen dependencies/ios/Info.plist
           plutil -lint dependencies/ios/Info.plist
 
-      - name: Diagnose rendering path
+      - name: Create OpenGL ES compatibility headers
         run: |
-          echo "=== device type macros ==="
-          grep -n -E "RETRO_GAMEPLATFORM|RETRO_DEVICETYPE|RETRO_MOBILE|RETRO_STANDARD|gameDeviceType" RSDKv4/RetroEngine.hpp RSDKv4/RetroEngine.cpp | head -40
-          echo "=== RETRO_USING_OPENGL / render type guards ==="
-          grep -n -E "RETRO_USING_OPENGL|RETRO_SOFTWARE_RENDER|RETRO_HARDWARE_RENDER|RETRO_RENDERTYPE" RSDKv4/*.cpp RSDKv4/*.hpp | head -60
-          echo "=== InitRenderDevice ==="
-          awk '/^int InitRenderDevice/{f=1} f{print NR": "$0; if(++n>150) exit}' RSDKv4/Drawing.cpp
-          echo "=== FlipScreen ==="
-          awk '/^void FlipScreen/{f=1} f{print NR": "$0; if(++n>130) exit}' RSDKv4/Drawing.cpp
-          echo "=== Renderer.cpp: first 60 lines ==="
-          sed -n 1,60p RSDKv4/Renderer.cpp
-
+          mkdir -p gl-shim/GL gl-shim/OpenGL
+          cat > gl-shim/gles_compat.h <<'EOF'
+          #pragma once
+          #include <OpenGLES/ES1/gl.h>
+          #include <OpenGLES/ES1/glext.h>
+          #define glOrtho glOrthof
+          #define glFrustum glFrustumf
+          #define glClearDepth glClearDepthf
+          #define glGenFramebuffers glGenFramebuffersOES
+          #define glBindFramebuffer glBindFramebufferOES
+          #define glDeleteFramebuffers glDeleteFramebuffersOES
+          #define glFramebufferTexture2D glFramebufferTexture2DOES
+          #define glCheckFramebufferStatus glCheckFramebufferStatusOES
+          #define glGenFramebuffersEXT glGenFramebuffersOES
+          #define glBindFramebufferEXT glBindFramebufferOES
+          #define glDeleteFramebuffersEXT glDeleteFramebuffersOES
+          #define glFramebufferTexture2DEXT glFramebufferTexture2DOES
+          #define glCheckFramebufferStatusEXT glCheckFramebufferStatusOES
+          #define GL_FRAMEBUFFER GL_FRAMEBUFFER_OES
+          #define GL_FRAMEBUFFER_EXT GL_FRAMEBUFFER_OES
+          #define GL_COLOR_ATTACHMENT0 GL_COLOR_ATTACHMENT0_OES
+          #define GL_COLOR_ATTACHMENT0_EXT GL_COLOR_ATTACHMENT0_OES
+          #define GL_FRAMEBUFFER_COMPLETE GL_FRAMEBUFFER_COMPLETE_OES
+          #define GL_FRAMEBUFFER_COMPLETE_EXT GL_FRAMEBUFFER_COMPLETE_OES
+          EOF
+          cat > gl-shim/GL/glew.h <<'EOF'
+          #pragma once
+          #include "../gles_compat.h"
+          #define GLEW_OK 0
+          static GLboolean glewExperimental = GL_TRUE;
+          static inline int glewInit(void) { return GLEW_OK; }
+          static inline const char *glewGetErrorString(int e) { return ""; }
+          EOF
+          for h in GL/gl.h GL/glext.h OpenGL/gl.h OpenGL/glext.h; do
+            echo '#include "../gles_compat.h"' > "gl-shim/$h"
+          done
+          find gl-shim -type f
 
       - name: Build (unsigned)
         run: |
@@ -277,10 +310,10 @@ jobs:
             -configuration Release \
             -sdk iphoneos \
             -derivedDataPath build \
-            GCC_PREPROCESSOR_DEFINITIONS='$(inherited) RETRO_USING_OPENGL=0' \
-            HEADER_SEARCH_PATHS='$(inherited) $(PROJECT_DIR)/RSDKv4 $(PROJECT_DIR)/RSDKv4/NativeObjects $(PROJECT_DIR)/dependencies/mac $(PROJECT_DIR)/deps-ios/include $(PROJECT_DIR)/dependencies/all/asio/asio/include $(PROJECT_DIR)/dependencies/all/tinyxml2 $(PROJECT_DIR)/dependencies/all/stb-image' \
+            GCC_PREPROCESSOR_DEFINITIONS='$(inherited) RETRO_USING_OPENGL=1 GLES_SILENCE_DEPRECATION=1' \
+            HEADER_SEARCH_PATHS='$(inherited) $(PROJECT_DIR)/gl-shim $(PROJECT_DIR)/RSDKv4 $(PROJECT_DIR)/RSDKv4/NativeObjects $(PROJECT_DIR)/dependencies/mac $(PROJECT_DIR)/deps-ios/include $(PROJECT_DIR)/dependencies/all/asio/asio/include $(PROJECT_DIR)/dependencies/all/tinyxml2 $(PROJECT_DIR)/dependencies/all/stb-image' \
             LIBRARY_SEARCH_PATHS='$(inherited) $(PROJECT_DIR)/deps-ios/lib' \
-            OTHER_LDFLAGS='$(inherited) -lvorbisfile -lvorbis -logg' \
+            OTHER_LDFLAGS='$(inherited) -lvorbisfile -lvorbis -logg -framework OpenGLES' \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
