@@ -82,6 +82,48 @@ jobs:
           assert n == 1, "GL profile pattern not found"
           save(p, s, nl)
 
+          # 1d. Use SDL's own framebuffer as the "default" one on iOS
+          p = "RSDKv4/Renderer.cpp"
+          raw, nl, s = load(p)
+          old = "glGetIntegerv(GL_FRAMEBUFFER_BINDING, &defaultFramebuffer);"
+          assert old in s, "default framebuffer query not found"
+          new = ("{\n"
+                 "#if RETRO_PLATFORM == RETRO_iOS\n"
+                 "            SDL_SysWMinfo wmInfo;\n"
+                 "            SDL_VERSION(&wmInfo.version);\n"
+                 "            if (SDL_GetWindowWMInfo(Engine.window, &wmInfo))\n"
+                 "                defaultFramebuffer = (decltype(defaultFramebuffer))wmInfo.info.uikit.framebuffer;\n"
+                 "            else\n"
+                 "#endif\n"
+                 "                glGetIntegerv(GL_FRAMEBUFFER_BINDING, &defaultFramebuffer);\n"
+                 "            {\n"
+                 "                GLint vp[4] = {0, 0, 0, 0};\n"
+                 "                glGetIntegerv(GL_VIEWPORT, vp);\n"
+                 "                int dw = 0, dh = 0;\n"
+                 "                SDL_GL_GetDrawableSize(Engine.window, &dw, &dh);\n"
+                 "                PrintLog(\"GLDEBUG: version=%s renderer=%s defaultFB=%d viewport=%d,%d,%d,%d drawable=%dx%d glErr=0x%x\",\n"
+                 "                         (const char *)glGetString(GL_VERSION), (const char *)glGetString(GL_RENDERER),\n"
+                 "                         (int)defaultFramebuffer, vp[0], vp[1], vp[2], vp[3], dw, dh, (unsigned)glGetError());\n"
+                 "            }\n"
+                 "        }")
+          s = s.replace(old, new, 1)
+          s = s.replace('#include "RetroEngine.hpp"', '#include "RetroEngine.hpp"\n#include <SDL2/SDL_syswm.h>', 1)
+
+          # 1e. Debug logging for the GL path (logs the first few calls; remove once rendering works)
+          def inject(s, pattern, label):
+              rx = re.compile(r"(^void " + pattern + r"\s*\{)", re.M)
+              code = ("\n    { static int dbg = 0; if (dbg < 4) { ++dbg; "
+                      "PrintLog(\"GLDEBUG: " + label + " call %d glErr=0x%x\", dbg, (unsigned)glGetError()); } }")
+              s2, n = rx.subn(lambda m: m.group(1) + code, s, count=1)
+              print(label, "instrumented" if n else "NOT FOUND")
+              return s2
+
+          s = inject(s, r"RenderScene\(\)", "RenderScene")
+          s = inject(s, r"TransferRetroBuffer\(\)", "TransferRetroBuffer")
+          s = inject(s, r"RenderRetroBuffer\([^)]*\)", "RenderRetroBuffer")
+          s = inject(s, r"RenderImage\([^)]*\)", "RenderImage")
+          save(p, s, nl)
+
           # 2. Run from the app's Documents folder
           p = "RSDKv4/main.cpp"
           raw, nl, s = load(p)
@@ -304,6 +346,17 @@ jobs:
             echo '#include "../gles_compat.h"' > "gl-shim/$h"
           done
           find gl-shim -type f
+
+      - name: Diagnose GL setup and frame output
+        run: |
+          echo "=== Drawing.cpp 196-300 (GL init) ==="
+          sed -n 196,300p RSDKv4/Drawing.cpp
+          echo "=== Drawing.cpp 540-700 (frame output) ==="
+          sed -n 540,700p RSDKv4/Drawing.cpp
+          echo "=== Renderer.cpp 490-640 (framebuffer / render setup) ==="
+          sed -n 490,640p RSDKv4/Renderer.cpp
+          echo "=== defaultFramebuffer uses ==="
+          grep -n "defaultFramebuffer" RSDKv4/*.cpp RSDKv4/*.hpp
 
       - name: Build (unsigned)
         run: |
