@@ -132,6 +132,29 @@ jobs:
           s = inject(s, r"RenderImage\([^)]*\)", "RenderImage")
           save(p, s, nl)
 
+          # 1f. iOS: use the real drawable pixel size for screen dimensions and the GL viewport
+          # (the stock code uses SCREEN_XSIZE_CONFIG * windowScale = a tiny viewport in the corner)
+          p = "RSDKv4/Drawing.cpp"
+          raw, nl, s = load(p)
+          old = "void SetScreenDimensions(int width, int height)\n{\n"
+          assert old in s, "SetScreenDimensions not found"
+          new = old + ("#if RETRO_PLATFORM == RETRO_iOS && RETRO_USING_OPENGL\n"
+                       "    if (Engine.window) {\n"
+                       "        int dw = 0, dh = 0;\n"
+                       "        SDL_GL_GetDrawableSize(Engine.window, &dw, &dh);\n"
+                       "        if (dw > 0 && dh > 0) {\n"
+                       "            width  = dw;\n"
+                       "            height = dh;\n"
+                       "        }\n"
+                       "    }\n"
+                       "#endif\n")
+          s = s.replace(old, new, 1)
+          old2 = "Engine.glContext = SDL_GL_CreateContext(Engine.window);"
+          assert old2 in s, "SDL_GL_CreateContext line not found"
+          s = s.replace(old2, old2 + "\n    PrintLog(\"GLDEBUG: context=%p sdlerr=%s version=%s renderer=%s\", (void *)Engine.glContext, SDL_GetError(), "
+                        "(const char *)glGetString(GL_VERSION), (const char *)glGetString(GL_RENDERER));", 1)
+          save(p, s, nl)
+
           # 2. Run from the app's Documents folder
           p = "RSDKv4/main.cpp"
           raw, nl, s = load(p)
