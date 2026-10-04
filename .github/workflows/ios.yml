@@ -9,6 +9,9 @@ on:
 jobs:
   build:
     runs-on: macos-latest
+    env:
+      # true = give SetupViewport the phone's real size (fixes horizontal stretch). false = previous behavior.
+      SYNC_LAYOUT: "true"
     steps:
       - name: Checkout (with submodules)
         uses: actions/checkout@v4
@@ -27,7 +30,7 @@ jobs:
       - name: Patch engine for iOS
         run: |
           python3 - <<'EOF'
-          import re
+          import os, re
 
           def load(p):
               raw = open(p, newline="").read()
@@ -207,6 +210,28 @@ jobs:
                          lambda m: m.group(1) + realloc, s, count=1)
           assert n == 1, "final SetScreenDimensions call pattern not found"
           save(p, s, nl)
+
+          # 1i. iOS: hand SetupViewport the phone's real size (it otherwise assumes a 16:9 window,
+          #     which stretches the picture and touch controls horizontally)
+          if os.environ.get("SYNC_LAYOUT") == "true":
+              p = "RSDKv4/Drawing.cpp"
+              raw, nl, s = load(p)
+              sync = (
+                  "\n#if RETRO_PLATFORM == RETRO_iOS\n"
+                  "    {\n"
+                  "        int dw = 0, dh = 0;\n"
+                  "        SDL_GL_GetDrawableSize(Engine.window, &dw, &dh);\n"
+                  "        if (dw > 0 && dh > 0) {\n"
+                  "            displaySettings.width  = dw;\n"
+                  "            displaySettings.height = dh;\n"
+                  "        }\n"
+                  "    }\n"
+                  "#endif")
+              s, n = re.subn(
+                  r"(#else\s*\n\s*displaySettings\.width\s*=\s*SCREEN_XSIZE_CONFIG \* Engine\.windowScale;\s*\n\s*displaySettings\.height\s*=\s*SCREEN_YSIZE \* Engine\.windowScale;)",
+                  lambda m: m.group(1) + sync, s, count=1)
+              assert n == 1, "display settings init pattern not found"
+              save(p, s, nl)
 
           # 2. Run from the app's Documents folder
           p = "RSDKv4/main.cpp"
