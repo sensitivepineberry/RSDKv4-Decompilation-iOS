@@ -124,7 +124,11 @@ jobs:
                         "SDL_GL_GetDrawableSize(Engine.window, &dw, &dh); "
                         "PrintLog(\"GLDEBUG: RenderScene state fb=%d status=0x%x viewport=%d,%d,%d,%d drawable=%dx%d ctx=%p\", "
                         "(int)fb, (unsigned)glCheckFramebufferStatus(GL_FRAMEBUFFER), vp[0], vp[1], vp[2], vp[3], dw, dh, "
-                        "(void *)SDL_GL_GetCurrentContext()); } }")
+                        "(void *)SDL_GL_GetCurrentContext()); "
+                        "PrintLog(\"GLDEBUG: layout display=%dx%d off=%d xsizeF=%.2f cxF=%.2f ysizeF=%.2f cyF=%.2f touch=%dx%d\", "
+                        "(int)displaySettings.width, (int)displaySettings.height, (int)displaySettings.offsetX, "
+                        "(double)SCREEN_XSIZE_F, (double)SCREEN_CENTERX_F, (double)SCREEN_YSIZE_F, (double)SCREEN_CENTERY_F, "
+                        "(int)touchWidth, (int)touchHeight); } }")
           s, n = re.compile(r"(^void RenderScene\(\)\s*\{)", re.M).subn(lambda m: m.group(1) + state_code, s, count=1)
           print("RenderScene state logging", "added" if n else "NOT FOUND")
           s = inject(s, r"TransferRetroBuffer\(\)", "TransferRetroBuffer")
@@ -178,14 +182,30 @@ jobs:
           assert n == 1, "FlipScreen not found"
           save(p, s, nl)
 
-          # 1h. iOS: set the real screen size BEFORE SetupViewport allocates the retro-buffer texture
+          # 1h. iOS: re-allocate the retro-buffer texture after the final screen size is known
+          # (SetupViewport allocates it with a stale size, which makes TransferRetroBuffer fail with GL_INVALID_VALUE)
           p = "RSDKv4/Drawing.cpp"
           raw, nl, s = load(p)
-          s, n = re.subn(
-              r"(textureList\[0\]\.id = -1;)(\s*\n\s*SetupViewport\(\);)",
-              r"\1\n#if RETRO_PLATFORM == RETRO_iOS\n    SetScreenDimensions(SCREEN_XSIZE_CONFIG * Engine.windowScale, SCREEN_YSIZE * Engine.windowScale);\n#endif\2",
-              s, count=1)
-          assert n == 1, "SetupViewport call pattern not found"
+          realloc = (
+              "\n#if RETRO_PLATFORM == RETRO_iOS && RETRO_USING_OPENGL\n"
+              "    {\n"
+              "        int rw = 0, wb = GFX_LINESIZE - 1;\n"
+              "        while (wb > 0) { rw++; wb >>= 1; }\n"
+              "        int rh = 0, hb = SCREEN_YSIZE - 1;\n"
+              "        while (hb > 0) { rh++; hb >>= 1; }\n"
+              "        int tw = 1 << rw, th = 1 << rh;\n"
+              "        textureList[0].width   = tw;\n"
+              "        textureList[0].height  = th;\n"
+              "        textureList[0].widthN  = 1.0f / tw;\n"
+              "        textureList[0].heightN = 1.0f / th;\n"
+              "        glBindTexture(GL_TEXTURE_2D, textureList[0].id);\n"
+              "        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, tw, th, 0, GL_RGBA, GL_UNSIGNED_BYTE, 0);\n"
+              "        glBindTexture(GL_TEXTURE_2D, 0);\n"
+              "    }\n"
+              "#endif")
+          s, n = re.subn(r"(SetScreenDimensions\(SCREEN_XSIZE, SCREEN_YSIZE\);\s*\n#endif)",
+                         lambda m: m.group(1) + realloc, s, count=1)
+          assert n == 1, "final SetScreenDimensions call pattern not found"
           save(p, s, nl)
 
           # 2. Run from the app's Documents folder
@@ -420,14 +440,12 @@ jobs:
           done
           find gl-shim -type f
 
-      - name: Diagnose viewport scaling
+      - name: Diagnose projection setup
         run: |
-          echo "=== Drawing.cpp 765-810 (start of SetupViewport) ==="
-          sed -n 765,810p RSDKv4/Drawing.cpp
-          echo "=== Drawing.cpp 975-1030 (callers of SetupViewport) ==="
-          sed -n 975,1030p RSDKv4/Drawing.cpp
-          echo "=== uses of display size values ==="
-          grep -n -E "displaySettings\.(width|height|offsetX|maxWidth)|SCREEN_XSIZE_F|touchWidth" RSDKv4/*.cpp | head -70
+          echo "=== matrix / projection calls ==="
+          grep -n -E "SetPerspectiveMatrix|glMatrixMode\(GL_PROJECTION\)|glLoadMatrixf|glMultMatrixf|glScalef" RSDKv4/*.cpp | head -40
+          echo "=== SetPerspectiveMatrix ==="
+          grep -n -A22 "^void SetPerspectiveMatrix" RSDKv4/*.cpp | head -40
 
       - name: Build (unsigned)
         run: |
