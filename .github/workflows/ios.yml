@@ -119,6 +119,14 @@ jobs:
               return s2
 
           s = inject(s, r"RenderScene\(\)", "RenderScene")
+          state_code = ("\n    { static int dbg2 = 0; if (dbg2 < 4) { ++dbg2; GLint vp[4] = {0, 0, 0, 0}; GLint fb = -1; "
+                        "glGetIntegerv(GL_VIEWPORT, vp); glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fb); int dw = 0, dh = 0; "
+                        "SDL_GL_GetDrawableSize(Engine.window, &dw, &dh); "
+                        "PrintLog(\"GLDEBUG: RenderScene state fb=%d status=0x%x viewport=%d,%d,%d,%d drawable=%dx%d ctx=%p\", "
+                        "(int)fb, (unsigned)glCheckFramebufferStatus(GL_FRAMEBUFFER), vp[0], vp[1], vp[2], vp[3], dw, dh, "
+                        "(void *)SDL_GL_GetCurrentContext()); } }")
+          s, n = re.compile(r"(^void RenderScene\(\)\s*\{)", re.M).subn(lambda m: m.group(1) + state_code, s, count=1)
+          print("RenderScene state logging", "added" if n else "NOT FOUND")
           s = inject(s, r"TransferRetroBuffer\(\)", "TransferRetroBuffer")
           s = inject(s, r"RenderRetroBuffer\([^)]*\)", "RenderRetroBuffer")
           s = inject(s, r"RenderImage\([^)]*\)", "RenderImage")
