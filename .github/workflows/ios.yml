@@ -255,6 +255,19 @@ jobs:
           plutil -insert UILaunchStoryboardName -string LaunchScreen dependencies/ios/Info.plist
           plutil -lint dependencies/ios/Info.plist
 
+      - name: Diagnose rendering path
+        run: |
+          echo "=== device type macros ==="
+          grep -n -E "RETRO_GAMEPLATFORM|RETRO_DEVICETYPE|RETRO_MOBILE|RETRO_STANDARD|gameDeviceType" RSDKv4/RetroEngine.hpp RSDKv4/RetroEngine.cpp | head -40
+          echo "=== RETRO_USING_OPENGL / render type guards ==="
+          grep -n -E "RETRO_USING_OPENGL|RETRO_SOFTWARE_RENDER|RETRO_HARDWARE_RENDER|RETRO_RENDERTYPE" RSDKv4/*.cpp RSDKv4/*.hpp | head -60
+          echo "=== InitRenderDevice ==="
+          awk '/^int InitRenderDevice/{f=1} f{print NR": "$0; if(++n>150) exit}' RSDKv4/Drawing.cpp
+          echo "=== FlipScreen ==="
+          awk '/^void FlipScreen/{f=1} f{print NR": "$0; if(++n>130) exit}' RSDKv4/Drawing.cpp
+          echo "=== Renderer.cpp: first 60 lines ==="
+          sed -n 1,60p RSDKv4/Renderer.cpp
+
 
       - name: Build (unsigned)
         run: |
