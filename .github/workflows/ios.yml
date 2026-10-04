@@ -155,6 +155,25 @@ jobs:
                         "(const char *)glGetString(GL_VERSION), (const char *)glGetString(GL_RENDERER));", 1)
           save(p, s, nl)
 
+          # 1g. iOS: (a) no high-DPI window, so the point-sized viewport matches the drawable;
+          #          (b) bind SDL's own framebuffer at the start of every frame
+          p = "RSDKv4/Drawing.cpp"
+          raw, nl, s = load(p)
+          inc = '#include "RetroEngine.hpp"'
+          assert inc in s, "RetroEngine.hpp include not found in Drawing.cpp"
+          s = s.replace(inc, inc + "\n#include <SDL2/SDL_syswm.h>\n#if RETRO_PLATFORM == RETRO_iOS\n#define SDL_WINDOW_ALLOW_HIGHDPI 0\n#endif", 1)
+          bind_code = ("\n#if RETRO_PLATFORM == RETRO_iOS && RETRO_USING_OPENGL\n"
+                       "    {\n"
+                       "        SDL_SysWMinfo wm;\n"
+                       "        SDL_VERSION(&wm.version);\n"
+                       "        if (SDL_GetWindowWMInfo(Engine.window, &wm))\n"
+                       "            glBindFramebuffer(GL_FRAMEBUFFER, wm.info.uikit.framebuffer);\n"
+                       "    }\n"
+                       "#endif")
+          s, n = re.compile(r"(^void FlipScreen\(\)\s*\{)", re.M).subn(lambda m: m.group(1) + bind_code, s, count=1)
+          assert n == 1, "FlipScreen not found"
+          save(p, s, nl)
+
           # 2. Run from the app's Documents folder
           p = "RSDKv4/main.cpp"
           raw, nl, s = load(p)
@@ -342,6 +361,15 @@ jobs:
           #pragma once
           #include <OpenGLES/ES1/gl.h>
           #include <OpenGLES/ES1/glext.h>
+          static inline void RSDK_BindTexture(GLenum target, GLuint texture)
+          {
+              glBindTexture(target, texture);
+              if (texture) {
+                  glTexParameteri(target, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+                  glTexParameteri(target, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+              }
+          }
+          #define glBindTexture RSDK_BindTexture
           #define glOrtho glOrthof
           #define glFrustum glFrustumf
           #define glClearDepth glClearDepthf
@@ -378,16 +406,14 @@ jobs:
           done
           find gl-shim -type f
 
-      - name: Diagnose GL setup and frame output
+      - name: Diagnose texture code
         run: |
-          echo "=== Drawing.cpp 196-300 (GL init) ==="
-          sed -n 196,300p RSDKv4/Drawing.cpp
-          echo "=== Drawing.cpp 540-700 (frame output) ==="
-          sed -n 540,700p RSDKv4/Drawing.cpp
-          echo "=== Renderer.cpp 490-640 (framebuffer / render setup) ==="
-          sed -n 490,640p RSDKv4/Renderer.cpp
-          echo "=== defaultFramebuffer uses ==="
-          grep -n "defaultFramebuffer" RSDKv4/*.cpp RSDKv4/*.hpp
+          echo "=== GL texture / framebuffer calls ==="
+          grep -n -E "glTexImage2D|glTexSubImage2D|glGenFramebuffers|glFramebufferTexture2D|glGenTextures|framebufferHiRes|renderbufferHiRes" RSDKv4/*.cpp RSDKv4/*.hpp | head -60
+          echo "=== TransferRetroBuffer ==="
+          awk '/^void TransferRetroBuffer/{f=1} f{print NR": "$0; if(++n>70) exit}' RSDKv4/Renderer.cpp
+          echo "=== RenderRetroBuffer ==="
+          awk '/^void RenderRetroBuffer/{f=1} f{print NR": "$0; if(++n>70) exit}' RSDKv4/Renderer.cpp
 
       - name: Build (unsigned)
         run: |
