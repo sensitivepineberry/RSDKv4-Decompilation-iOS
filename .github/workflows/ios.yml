@@ -295,6 +295,7 @@ jobs:
           #pragma once
           #include "../gles_compat.h"
           #define GLEW_OK 0
+          #define GLEW_ERROR_NO_GLX_DISPLAY 4
           static GLboolean glewExperimental = GL_TRUE;
           static inline int glewInit(void) { return GLEW_OK; }
           static inline const char *glewGetErrorString(int e) { return ""; }
