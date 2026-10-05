@@ -9,9 +9,17 @@ on:
 jobs:
   build:
     runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # mobile   = stock phone mode: native touch menus and on-screen controls
+        # standard = desktop-style mode: script-driven menus (needed by mods like Sonic 1 Forever / Sonic 2 Absolute);
+        #            no on-screen controls, so it needs a controller or keyboard
+        mode: [mobile, standard]
     env:
       # true = give SetupViewport the phone's real size (fixes horizontal stretch). false = previous behavior.
       SYNC_LAYOUT: "true"
+      DEVICE_MODE: ${{ matrix.mode }}
     steps:
       - name: Checkout (with submodules)
         uses: actions/checkout@v4
@@ -231,6 +239,16 @@ jobs:
                   r"(#else\s*\n\s*displaySettings\.width\s*=\s*SCREEN_XSIZE_CONFIG \* Engine\.windowScale;\s*\n\s*displaySettings\.height\s*=\s*SCREEN_YSIZE \* Engine\.windowScale;)",
                   lambda m: m.group(1) + sync, s, count=1)
               assert n == 1, "display settings init pattern not found"
+              save(p, s, nl)
+
+          # 1j. "standard" build: desktop-style device type (script-driven menus)
+          if os.environ.get("DEVICE_MODE") == "standard":
+              p = "RSDKv4/RetroEngine.hpp"
+              raw, nl, s = load(p)
+              s, n1 = re.subn(r"(#define\s+RETRO_DEVICETYPE\s+)\(RETRO_MOBILE\)", r"\1(RETRO_STANDARD)", s)
+              s, n2 = re.subn(r"(#define\s+RETRO_GAMEPLATFORM\s+)\(RETRO_MOBILE\)", r"\1(RETRO_STANDARD)", s)
+              print("standard mode patches:", n1, n2)
+              assert n1 >= 1 and n2 >= 1, "device type macros not found"
               save(p, s, nl)
 
           # 2. Run from the app's Documents folder
@@ -491,12 +509,20 @@ jobs:
 
       - name: Package IPA
         run: |
+          APP=$(ls -d build/Build/Products/Release-iphoneos/*.app)
+          if [ "$DEVICE_MODE" = "standard" ]; then
+            # separate bundle ID so both variants can be installed side by side
+            PLIST="$APP/Info.plist"
+            ID=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$PLIST")
+            /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier ${ID}.standard" "$PLIST"
+            /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName RSDKv4 Standard" "$PLIST"
+          fi
           mkdir -p Payload
-          cp -R build/Build/Products/Release-iphoneos/*.app Payload/
-          zip -r RSDKv4-unsigned.ipa Payload
+          cp -R "$APP" Payload/
+          zip -r "RSDKv4-$DEVICE_MODE.ipa" Payload
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: RSDKv4-ios-unsigned
-          path: RSDKv4-unsigned.ipa
+          name: RSDKv4-ios-unsigned-${{ matrix.mode }}
+          path: RSDKv4-${{ matrix.mode }}.ipa
